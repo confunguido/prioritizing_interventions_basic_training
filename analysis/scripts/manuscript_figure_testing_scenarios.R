@@ -1,0 +1,351 @@
+##==================================================#
+## load files--------------
+##==================================================#
+library(reshape2)
+library(tidyverse)
+library(fda)
+library(PropCIs)
+
+inf.testDay = read.csv('../output/output_testing_scenarios.csv', stringsAsFactors = F)
+inf.time = read.csv('../output/output_testing_time_scenarios.csv', stringsAsFactors = F)
+inf.testDay.alt = read.csv('../output/output_alternative_testing_scenarios.csv', stringsAsFactors = F)
+inf.time.alt = read.csv('../output/output_alternative_testing_time_scenarios.csv', stringsAsFactors = F)
+
+importation_name = c('None','1%','10%')
+importations_list = sort(unique(inf.testDay$importation))
+##test_scenarios = sort(unique(inf.testDay$testing))
+test_scenarios = c("No", "Arrival", "Arrival_14", "Arrival_7_14", "Arrival_3_5")
+test_names = c("None", "1", "1,14", "1,7,14", "1,3,5")
+nreps = max(inf.testDay$rep)
+
+##==================================================#
+## Functions----------
+##==================================================#
+error.bar <- function(x, y, upper, lower, length=0.1,...){
+  arrows(x,upper, x, lower, angle=90, code=3, length=length, ...)
+}
+
+##==================================================#
+## Create figures----------
+##==================================================#
+outbreak_min = 100
+jpeg('../figures/manuscript_figure_testing_scenarios.jpeg',  width=6.5,height=4, units="in", res = 300)
+
+layout(matrix(1:(2*length(importations_list)),ncol = length(importations_list), byrow = F))
+par(mar = c(2,2,2,2), oma = c(2,3,4,0))
+pplt = par("plt")
+adjx = (0.1 - pplt[1]) / (pplt[2] - pplt[1])
+for(pp_import in 1:length(importations_list)){
+    n_fig = pp_import * 2 - 2
+    tmp_out = inf.testDay[inf.testDay$importation == importations_list[pp_import],]
+    tmp_out = as.matrix(dcast(tmp_out,rep ~ testing, value.var = 'infections')[,-which(colnames(tmp_out) == 'rep')])
+
+    outbreak_array = tmp_out
+    outbreak_array[outbreak_array < outbreak_min] = 0
+    outbreak_array[outbreak_array > outbreak_min] = 1
+    
+    outbreak_prob_array = apply(tmp_out, 2, function(x){sum(x>outbreak_min)/length(x)})
+
+    outbreak_prob_ci = lapply(1:length(outbreak_prob_array),
+                function(x){
+                    exactci(outbreak_prob_array[x]*nrow(tmp_out),nrow(tmp_out),conf.level = 0.95)
+                })
+    outbreak_prob_ci = matrix(unlist(outbreak_prob_ci),ncol = 2, byrow = T)
+    rownames(outbreak_prob_ci) = names(outbreak_prob_array)
+    
+    br_prob = barplot(outbreak_prob_array[test_scenarios], yaxt = 'n', xaxt = 'n')
+    error.bar(br_prob,outbreak_prob_array[test_scenarios],
+              outbreak_prob_ci[test_scenarios,2], outbreak_prob_ci[test_scenarios,1])
+    
+    axis(side = 1, at = br_prob, labels = test_names,cex.axis = 0.7, las = 1)
+    axis(side = 2, las = 2)
+    mtext(LETTERS[n_fig + 1], side = 3, line = 0.5, outer = F, cex = 1.0, adj = adjx)
+    if(pp_import == 1){
+        mtext("Outbreak probability", side = 2, line = 3.5)
+    }
+    mtext(importation_name[importations_list[pp_import]], side = 3, line = 2.5)
+    
+    print(sprintf("Importation %s. Probability of outbreak", importation_name[pp_import]))
+    print(outbreak_prob_array[test_scenarios])
+    
+    outbreak_size_array = apply(tmp_out, 2, function(x){median(x[x>outbreak_min], na.rm = T)})
+    outbreak_size_array_low = apply(tmp_out, 2, function(x){quantile(x[x>outbreak_min], probs = 0.25, na.rm = T)})
+    outbreak_size_array_high = apply(tmp_out, 2, function(x){quantile(x[x>outbreak_min], probs = 0.75, na.rm = T)})
+
+    ## br_size = barplot(outbreak_size_array[test_scenarios], yaxt = 'n', xaxt = 'n',
+    ##                   ylim = c(0,max(outbreak_size_array_high, na.rm = T)))
+    ## error.bar(br_size, outbreak_size_array[test_scenarios], outbreak_size_array_high[test_scenarios], outbreak_size_array_low[test_scenarios])
+
+    
+    outbreak_out_box = gather(as.data.frame(tmp_out),key = 'scenario',value = 'infections')
+    outbreak_out_box$scenario = factor(outbreak_out_box$scenario, levels = test_scenarios)
+
+    br_size = boxplot(infections ~ scenario,data = outbreak_out_box, yaxt = 'n', xaxt = 'n',
+            ylim = c(0,max(outbreak_size_array_high, na.rm = T)),lwd = 0.6, frame.plot = F)
+    
+    ##axis(side = 1, at = br_size, labels = test_names, cex.axis = 0.7, las = 1)
+    axis(side = 1, at = seq(from=1,by=1,to=length(br_size$names)), labels = test_names, cex.axis = 0.7, las = 1)
+    axis(side = 2, las = 2)
+    mtext(LETTERS[n_fig + 2], side = 3, line = 0.5, outer = F, cex = 1.0, adj = adjx)
+    if(pp_import == 1){
+        mtext("Outbreak size", side = 2, line = 3.5)
+    }
+
+}
+##mtext(sprintf("Outbreak > %d infections", outbreak_min), outer = T, line = -3)
+mtext("Trainers and support staff exposed in community", side = 3, outer = T, line = 2.5)
+mtext("Testing scenario", side = 1, line = 1, outer = T)
+dev.off()
+
+##==================================================#
+##Outbreak prob----------
+##==================================================#
+outbreak_min = 100
+jpeg('../figures/manuscript_figure_testing_scenarios_outbreak_prob.jpeg',  width=6.5,height=4, units="in", res = 300)
+
+layout(matrix(1:(2*length(importations_list)),ncol = length(importations_list), byrow = F))
+par(mar = c(2,2,2,2), oma = c(2,3,4,0))
+pplt = par("plt")
+adjx = (0.1 - pplt[1]) / (pplt[2] - pplt[1])
+for(pp_import in 1:length(importations_list)){
+    n_fig = pp_import * 2 - 2
+    tmp_out = inf.testDay[inf.testDay$importation == importations_list[pp_import],]
+    tmp_out = as.matrix(dcast(tmp_out,rep ~ testing, value.var = 'infections')[,-which(colnames(tmp_out) == 'rep')])
+
+    outbreak_array = tmp_out
+    outbreak_array[outbreak_array < outbreak_min] = 0
+    outbreak_array[outbreak_array > outbreak_min] = 1
+    
+    outbreak_prob_array = apply(tmp_out, 2, function(x){sum(x>outbreak_min)/length(x)})
+
+    outbreak_prob_ci = lapply(1:length(outbreak_prob_array),
+                function(x){
+                    exactci(outbreak_prob_array[x]*nrow(tmp_out),nrow(tmp_out),conf.level = 0.95)
+                })
+    outbreak_prob_ci = matrix(unlist(outbreak_prob_ci),ncol = 2, byrow = T)
+    rownames(outbreak_prob_ci) = names(outbreak_prob_array)
+
+    
+    br_prob = barplot(outbreak_prob_array[test_scenarios], yaxt = 'n', xaxt = 'n', ylim = c(0,1))
+    error.bar(br_prob,outbreak_prob_array[test_scenarios],
+              outbreak_prob_ci[test_scenarios,2], outbreak_prob_ci[test_scenarios,1])
+    
+    axis(side = 1, at = br_prob, labels = test_names,cex.axis = 0.7, las = 1)
+    axis(side = 2, las = 2)
+    mtext(LETTERS[n_fig + 1], side = 3, line = 0.5, outer = F, cex = 1.0, adj = adjx)
+    if(pp_import == 1){
+        mtext("Outbreak probability", side = 2, line = 0.5, outer = T)
+    }
+    if(pp_import == 3){
+        mtext("Specificity: 0.998", side = 4, line = 0.5, cex = 0.8)
+    }
+    mtext(importation_name[importations_list[pp_import]], side = 3, line = 2.5)
+    
+    print(sprintf("Importation %s. Probability of outbreak", importation_name[pp_import]))
+    print(outbreak_prob_array[test_scenarios])
+
+    tmp_out_alt = inf.testDay.alt[inf.testDay.alt$importation == importations_list[pp_import],]
+    tmp_out_alt = as.matrix(dcast(tmp_out_alt,rep ~ testing, value.var = 'infections')[,-which(colnames(tmp_out_alt) == 'rep')])
+
+    outbreak_array = tmp_out_alt
+    outbreak_array[outbreak_array < outbreak_min] = 0
+    outbreak_array[outbreak_array > outbreak_min] = 1
+    
+    outbreak_prob_array = apply(tmp_out_alt, 2, function(x){sum(x>outbreak_min)/length(x)})
+
+    outbreak_prob_ci = lapply(1:length(outbreak_prob_array),
+                function(x){
+                    exactci(outbreak_prob_array[x]*nrow(tmp_out_alt),nrow(tmp_out_alt),conf.level = 0.95)
+                })
+    outbreak_prob_ci = matrix(unlist(outbreak_prob_ci),ncol = 2, byrow = T)
+    rownames(outbreak_prob_ci) = names(outbreak_prob_array)
+    
+    br_prob = barplot(outbreak_prob_array[test_scenarios], yaxt = 'n', xaxt = 'n', ylim = c(0,1))
+    error.bar(br_prob,outbreak_prob_array[test_scenarios],
+              outbreak_prob_ci[test_scenarios,2], outbreak_prob_ci[test_scenarios,1])
+    
+    axis(side = 1, at = br_prob, labels = test_names,cex.axis = 0.7, las = 1)
+    axis(side = 2, las = 2)
+    mtext(LETTERS[n_fig + 2], side = 3, line = 0.5, outer = F, cex = 1.0, adj = adjx)
+    if(pp_import == 3){
+        mtext("Specificity: 0.992", side = 4, line = 0.5, cex = 0.8)
+    }
+    ##mtext(importation_name[importations_list[pp_import]], side = 3, line = 2.5)
+    
+    print(sprintf("Importation %s. Probability of outbreak", importation_name[pp_import]))
+    print(outbreak_prob_array[test_scenarios])    
+}
+
+##mtext(sprintf("Outbreak > %d infections", outbreak_min), outer = T, line = -3)
+mtext("Trainers and support staff exposed in community", side = 3, outer = T, line = 2.5)
+mtext("Testing scenario", side = 1, line = 1, outer = T)
+dev.off()
+
+##==================================================#
+## Outbreak size testing alternative----------
+##==================================================#
+outbreak_min = 100
+jpeg('../figures/manuscript_figure_testing_scenarios_outbreak_size.jpeg',  width=6.5,height=4, units="in", res = 300)
+
+layout(matrix(1:(2*length(importations_list)),ncol = length(importations_list), byrow = F))
+par(mar = c(2,2,2,2), oma = c(2,3,4,0))
+pplt = par("plt")
+adjx = (0.1 - pplt[1]) / (pplt[2] - pplt[1])
+for(pp_import in 1:length(importations_list)){
+    n_fig = pp_import * 2 - 2
+    tmp_out = inf.testDay[inf.testDay$importation == importations_list[pp_import],]
+    tmp_out = as.matrix(dcast(tmp_out,rep ~ testing, value.var = 'infections')[,-which(colnames(tmp_out) == 'rep')])
+
+    outbreak_array = tmp_out
+    outbreak_array[outbreak_array < outbreak_min] = 0
+    outbreak_array[outbreak_array > outbreak_min] = 1
+
+    outbreak_size_array = apply(tmp_out, 2, function(x){median(x[x>outbreak_min], na.rm = T)})
+    outbreak_size_array_low = apply(tmp_out, 2, function(x){quantile(x[x>outbreak_min], probs = 0.25, na.rm = T)})
+    outbreak_size_array_high = apply(tmp_out, 2, function(x){quantile(x[x>outbreak_min], probs = 0.75, na.rm = T)})
+
+    outbreak_out_box = gather(as.data.frame(tmp_out),key = 'scenario',value = 'infections')
+    outbreak_out_box$scenario = factor(outbreak_out_box$scenario, levels = test_scenarios)
+
+    br_size = boxplot(infections ~ scenario,data = outbreak_out_box, yaxt = 'n', xaxt = 'n',
+            ylim = c(0,max(outbreak_out_box$infections, na.rm = T)*1.1),lwd = 0.6, frame.plot = F)
+    
+    ##axis(side = 1, at = br_size, labels = test_names, cex.axis = 0.7, las = 1)
+    axis(side = 1, at = seq(from=1,by=1,to=length(br_size$names)), labels = test_names, cex.axis = 0.7, las = 1)
+    axis(side = 2, las = 2)
+    
+    mtext(LETTERS[n_fig + 1], side = 3, line = 0.5, outer = F, cex = 1.0, adj = adjx)
+    if(pp_import == 1){
+        mtext("Outbreak size", side = 2, line = 0.5, outer = T)
+    }
+    if(pp_import == 3){
+        mtext("Specificity: 0.998", side = 4, line = 0.5, cex = 0.8)
+    }
+    mtext(importation_name[importations_list[pp_import]], side = 3, line = 2.5)
+    
+    print(sprintf("Importation %s. Probability of outbreak", importation_name[pp_import]))
+    print(outbreak_prob_array[test_scenarios])
+
+    tmp_out_alt = inf.testDay.alt[inf.testDay.alt$importation == importations_list[pp_import],]
+    tmp_out_alt = as.matrix(dcast(tmp_out_alt,rep ~ testing, value.var = 'infections')[,-which(colnames(tmp_out_alt) == 'rep')])
+
+    outbreak_size_array = apply(tmp_out_alt, 2, function(x){median(x[x>outbreak_min], na.rm = T)})
+    outbreak_size_array_low = apply(tmp_out_alt, 2, function(x){quantile(x[x>outbreak_min], probs = 0.25, na.rm = T)})
+    outbreak_size_array_high = apply(tmp_out_alt, 2, function(x){quantile(x[x>outbreak_min], probs = 0.75, na.rm = T)})
+
+    outbreak_out_box = gather(as.data.frame(tmp_out_alt),key = 'scenario',value = 'infections')
+    outbreak_out_box$scenario = factor(outbreak_out_box$scenario, levels = test_scenarios)
+
+    br_size = boxplot(infections ~ scenario,data = outbreak_out_box, yaxt = 'n', xaxt = 'n',
+                      ylim = c(0,max(outbreak_out_box$infections, na.rm = T)*1.1),,lwd = 0.6, frame.plot = F)
+    
+    ##axis(side = 1, at = br_size, labels = test_names, cex.axis = 0.7, las = 1)
+    axis(side = 1, at = seq(from=1,by=1,to=length(br_size$names)), labels = test_names, cex.axis = 0.7, las = 1)
+    axis(side = 2, las = 2)
+
+    mtext(LETTERS[n_fig + 2], side = 3, line = 0.5, outer = F, cex = 1.0, adj = adjx)
+    if(pp_import == 3){
+        mtext("Specificity: 0.992", side = 4, line = 0.5, cex = 0.8)
+    }
+    ##mtext(importation_name[importations_list[pp_import]], side = 3, line = 2.5)
+    
+    print(sprintf("Importation %s. Probability of outbreak", importation_name[pp_import]))
+    print(outbreak_prob_array[test_scenarios])    
+}
+
+##mtext(sprintf("Outbreak > %d infections", outbreak_min), outer = T, line = -3)
+mtext("Trainers and support staff exposed in community", side = 3, outer = T, line = 2.5)
+mtext("Testing scenario", side = 1, line = 1, outer = T)
+dev.off()
+
+
+##==================================================#
+## Infections over time figures----------
+##==================================================#
+outbreak_min = 100
+jpeg('../figures/manuscript_figure_testing_scenarios_time.jpeg',  width=10,height=6, units="in", res = 300)
+layout(matrix(1:(length(importations_list) * length(test_scenarios)),nrow = length(importations_list), byrow = T))
+par(mar = c(0,0,0,0), oma = c(5,5,3,3))
+for(pp_import in 1:length(importations_list)){
+    tmp_out = inf.time[inf.time$importation == importations_list[pp_import],]    
+    for(cc in 1:length(test_scenarios)){
+        tmp_out_scenario = tmp_out[tmp_out$testing == test_scenarios[cc], ]
+        for(nn in 1:nreps){
+            tmp_inf = tmp_out_scenario[tmp_out_scenario$rep == nn,]
+            if(nn == 1){
+                plot(tmp_inf$time, tmp_inf$infections, type = "l", col = "#bcbddc80",
+                     ylim = c(0,max(tmp_out$infections)), yaxt = 'n', xaxt = 'n')
+                if(pp_import == 1){
+                    mtext(sprintf(test_scenarios[cc]), side = 3, line = 1)
+                }
+                if(cc == 1){
+                    mtext("Infections",side = 2, line = 3)
+                    axis(2, las = 2)
+                }
+                if(pp_import == length(importations_list)){
+                    axis(1)
+                }
+            }else{
+                lines(tmp_inf$time, tmp_inf$infections,   col = "#bcbddc80")
+            }
+            
+        }
+        cum_inf = aggregate( infections ~ rep, data = tmp_out_scenario, FUN = sum)
+        cum_inf = cum_inf[cum_inf$infections > outbreak_min,]
+
+        if(nrow(cum_inf) > 0){
+            if(nrow(cum_inf) > 5){
+                color_reps = sample(1:nrow(cum_inf), size = 5, replace = F)
+            }else{
+                color_reps = 1:nrow(cum_inf)                
+            }
+            ## plot random trajectories
+            for(nn in 1:length(color_reps)){
+                tmp_inf = tmp_out_scenario[tmp_out_scenario$rep == cum_inf$rep[nn],]
+                lines(tmp_inf$time, tmp_inf$infections,   col = nn)
+            }
+        }
+    }
+    mtext(importation_name[importations_list[pp_import]], side = 4, line = 0.5, cex = 0.9)
+}
+mtext("Trainers and support staff exposed in community", side = 4, outer = T, line = 1.7)
+mtext("Days", side = 1, outer = T, line = 3)
+dev.off()
+
+
+
+##==================================================#
+## Curve boxplots figures----------
+##==================================================#
+outbreak_min = 100
+jpeg('../figures/manuscript_figure_testing_scenarios_curvedplots.jpeg',  width=10,height=6, units="in", res = 300)
+layout(matrix(1:(length(importations_list) * length(test_scenarios)),nrow = length(importations_list), byrow = T))
+par(mar = c(0,0,0,0), oma = c(5,5,3,3))
+for(pp_import in 1:length(importations_list)){
+    tmp_out = inf.time[inf.time$importation == importations_list[pp_import],]    
+    for(cc in 1:length(test_scenarios)){
+        tmp_out_scenario = tmp_out[tmp_out$testing == test_scenarios[cc], ]        
+        tmp_df = tidyr::spread(tmp_out_scenario[,c('time','rep','infections')], key = 'rep', value = 'infections')
+        fbplot(as.matrix(tmp_df[,-1]),x = tmp_df$time, method = 'MBD',
+               xaxt = 'n', yaxt = 'n', ylab = '', xlab = '',
+               color = "#a6cee3", barcol ="#1f78b4", outliercol ="#b2df8a")          
+        ## plot(tmp_inf$time, tmp_inf$infections, type = "l", col = "#bcbddc80",
+        ##      ylim = c(0,max(tmp_out$infections)), yaxt = 'n', xaxt = 'n')
+        
+        if(pp_import == 1){
+            mtext(sprintf(test_scenarios[cc]), side = 3, line = 1)
+        }
+        if(cc == 1){
+            mtext("Infections",side = 2, line = 3)
+            axis(2, las = 2)
+        }
+        if(pp_import == length(importations_list)){
+            axis(1)
+        }    
+    }
+    mtext(importation_name[importations_list[pp_import]], side = 4, line = 0.5, cex = 0.9)
+}
+mtext("Trainers and support staff exposed in community", side = 4, outer = T, line = 1.7)
+mtext("Days", side = 1, outer = T, line = 3)
+dev.off()
+

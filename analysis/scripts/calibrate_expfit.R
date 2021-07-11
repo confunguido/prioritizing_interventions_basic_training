@@ -1,0 +1,160 @@
+##=========================================#
+## Fit the R0 and initial infections to
+## data from two outbreaks in Fort Benning
+## and Fort Leonard Wood
+## Author: Alex Perkins & Guido España
+##=========================================#
+## Initial parameters ----------
+##=========================================#
+adjust_weibull <- function(med_in, sd_in){
+    y = c(med_in, sd_in)
+    opt_res = optim(par = c(shape_in = 10, scale_in = 10),fn = function(params_in){
+        shape_in = params_in['shape_in']
+        scale_in = params_in['scale_in']
+        if(shape_in > 0 & scale_in > 0){
+            med_wei = scale_in * log(2)^(1/shape_in)
+            var_wei = (scale_in^2)*( gamma(1 + 2/shape_in) - (gamma(1 + 1/shape_in))^2)
+            sd_wei = sqrt(var_wei)
+            fit.l = sum((c(med_wei,sd_wei) - y)^2)
+            return(fit.l)
+        }else{
+            return(10000000)
+        }
+    })
+    shape_t = opt_res$par[['shape_in']]
+    scale_t = opt_res$par[['scale_in']]
+    
+    return(c(shape = shape_t, scale = scale_t))
+}
+
+##=========================================#
+## Initial parameters ----------
+##=========================================#
+library(scam)
+## parameter assumptions that calibration is conditional on
+params_calibrated = data.frame(
+    base_name = c('FB', 'FLW'),
+    R0 = c(0,0),
+    R0_mag = c(0,0),
+    initial_inf = c(0,0),
+    initial_inf_low = c(0,0),
+    initial_inf_high = c(0,0),
+    stringsAsFactors = F)
+
+##=========================================#
+## determine sens. spec (new) --------
+##=========================================#
+genint_params = adjust_weibull(5, 1.9)
+pcr.spec.screen = 0.998
+pcr.spec.commercial = 0.998
+pcr.sens.screen.target = 0.859
+pcr.sens.commercial.target = 0.859
+
+k_inc = 5.807
+gamma = 1 / (k_inc * 0.948)
+mu = 0.46
+k_E = 2.80
+k_I = 1
+alpha = 1
+k_P = k_inc - k_E
+C = k_inc * gamma * mu / (alpha * k_P * mu + k_inc * gamma)
+
+t_tost = seq(-23,23,0.05)
+fm = alpha * C * (1 - pgamma(-t_tost, shape=k_P, scale=1/(k_inc*gamma)))
+fp = C * (1 - pgamma(t_tost, shape=k_I, scale=1/(k_I*mu)))
+f = ifelse(t_tost>0,fp,fm)
+f = approxfun(t_tost, f)
+
+t_tost = -22:22
+f_tost = sapply(t_tost,function(t)integrate(f,t,t+1)[[1]])
+f_tost = f_tost / sum(f_tost)
+tost = cbind(t_tost,f_tost)
+
+load('sens_postOnset.RData')
+sens_draw = sens_postOnset.median
+genint = pweibull(1:21,scale=genint_params['scale'],shape=genint_params['shape']) - pweibull(0:20,scale=genint_params['scale'],shape=genint_params['shape'])
+genint = genint / sum(genint)
+
+sensitivity = rbind(
+    cbind(
+        1:6,
+        genint[1:6]/genint[6] * max(sens_draw)),
+    cbind(
+        (1:(length(sens_draw) - 1))  + 6,
+        sens_draw[-1]))
+
+
+sensitivity_array = sensitivity[,2]
+sensitivity_time = sensitivity[,1]
+
+sens.daily = sens_postOnset.median * (pweibull(1:34,shape=0.9,scale=5.657) -
+                                      pweibull(0:33,shape=0.9,scale=5.657))
+sens.overall.default = sum(sens.daily)
+
+sens.fun = function(sens.overall){
+  pmin(1, (sens.overall / sens.overall.default) * sensitivity[,2])
+}
+
+pcr.sens.commercial = function(dd){
+    ## Day here means day relative to exposure
+    dd = dd 
+    dd[dd > length(sensitivity_array)] = length(sensitivity_array)
+    dd[dd < 1] = 1
+    return(sens.fun(pcr.sens.commercial.target)[dd])
+}
+
+
+pcr.sens.screen = function(dd){
+    ## Day here means day relative to exposure
+    dd[dd > length(sensitivity_array)] = length(sensitivity_array)
+    dd[dd < 1] = 1
+    return(sens.fun(pcr.sens.screen.target)[dd])
+}
+
+
+Se = mean(pcr.sens.commercial(sensitivity_time))
+Sp = pcr.spec.commercial
+
+##=========================================#
+## Calibrate fort benning ------
+##=========================================#
+## Fort Benning
+p = seq(0, 1, length.out = 1e6)
+Pr = dbinom(4, 640, p * Se + (1 - p) * (1 - Sp))
+Pr = Pr / sum(Pr)
+prev.init = sum(p * Pr)
+
+p[max(which(cumsum(Pr)<0.025))+1]
+p[max(which(cumsum(Pr)<0.975))+1]
+
+print(sprintf("Fort Benning Wood. initial inf. %.4f (%.4f - %.4f)", prev.init, p[max(which(cumsum(Pr)<0.025))+1], p[max(which(cumsum(Pr)<0.975))+1]))
+params_calibrated[params_calibrated$base_name == 'FB','initial_inf'] = prev.init
+params_calibrated[params_calibrated$base_name == 'FB','initial_inf_low'] = p[max(which(cumsum(Pr)<0.025))+1]
+params_calibrated[params_calibrated$base_name == 'FB','initial_inf_high'] = p[max(which(cumsum(Pr)<0.975))+1]
+
+
+##=========================================#
+## Calibrate fort leonard wood ------
+##=========================================#
+## Fort Leonard Wood
+p = seq(0, 1, length.out=1e6)
+Pr = dbinom(0, 500, p * Se + (1 - p) * (1 - Sp))
+Pr = Pr / sum(Pr)
+prev.init = sum(p*Pr)
+prev.init
+p[max(which(cumsum(Pr)<0.025))+1]
+p[max(which(cumsum(Pr)<0.975))+1]
+
+
+print(sprintf("Fort Leonard Wood. initial inf. %.4f (%.4f - %.4f)", prev.init, p[max(which(cumsum(Pr)<0.025))+1], p[max(which(cumsum(Pr)<0.975))+1]))
+
+params_calibrated[params_calibrated$base_name == 'FLW','initial_inf'] = prev.init
+params_calibrated[params_calibrated$base_name == 'FLW','initial_inf_low'] = p[max(which(cumsum(Pr)<0.025))+1]
+params_calibrated[params_calibrated$base_name == 'FLW','initial_inf_high'] = p[max(which(cumsum(Pr)<0.975))+1]
+
+params_calibrated$genint_shape = genint_params['shape']
+params_calibrated$genint_scale = genint_params['scale']
+##=========================================#
+## Write results ------
+##=========================================#
+write.csv(params_calibrated, '../output/calibrated_parameters.csv', row.names = F)
