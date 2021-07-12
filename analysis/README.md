@@ -1,1 +1,0 @@
-# basictraining_covid
