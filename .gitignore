@@ -3,5 +3,4 @@
 analysis/output/
 analysis/output_experiments/
 analysis/bin/
-analysis/figures/
 *.Rout
